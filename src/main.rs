@@ -18,10 +18,6 @@ use stm32f7xx_hal::{device, prelude::*};
 use core::num::Wrapping;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-fn yeah() {
-    asm::nop();
-}
-
 static MILLIS: AtomicUsize = AtomicUsize::new(0);
 
 #[exception]
@@ -49,60 +45,14 @@ fn main() -> ! {
     let p = device::Peripherals::take().unwrap();
     let cp = cortex_m::Peripherals::take().unwrap();
     
-    // let rcc = p.RCC;
-    // let pwr = p.PWR;
-    
-    // // Enable PWR, set voltage scale
-    // rcc.apb1enr.modify(|_, w| w.pwren().set_bit());
-    // pwr.cr1.modify(|_, w| w.vos().scale1());
-
-    // // Enable HSE
-    // rcc.cr.modify(|_, w| w.hsebyp().set_bit().hseon().set_bit());
-    // while rcc.cr.read().hserdy().is_not_ready() {};
-
-    // // Configure PLL
-    // rcc.cr.modify(|_, w| w.pllon().clear_bit());
-    // rcc.pllcfgr.write(|w| unsafe {
-    //     w.pllsrc().hse().
-    //     pllm().bits(4).
-    //     plln().bits(216).
-    //     pllp().div2().
-    //     pllq().bits(9)
-    // });
-    // rcc.cr.modify(|_, w| w.pllon().set_bit());
-    // while rcc.cr.read().pllrdy().is_not_ready() {};
-
-    // // Enable overdrive
-    // pwr.cr1.modify(|_, w| w.oden().set_bit());
-    // while pwr.csr1.read().odrdy().bit_is_clear() {};
-    // pwr.cr1.modify(|_, w| w.odswen().set_bit());
-    // while pwr.csr1.read().odswrdy().bit_is_clear() {};
-
-    // // Configure clock and flash latency
-    // let flash = p.FLASH;
-    // let flash_latency: u8 = 7;
-    // if flash_latency > flash.acr.read().latency().bits() {
-    //     flash.acr.modify(|_, w| { w.latency().bits(flash_latency) });
-    // }
-    // rcc.cfgr.modify(|_, w| w.
-    //     ppre1().div16().
-    //     ppre2().div16().
-    //     hpre().div1().
-    //     sw().pll()
-    // );
-    // while !rcc.cfgr.read().sw().is_pll() {};
-    // if flash_latency < flash.acr.read().latency().bits() {
-    //     flash.acr.modify(|_, w| { w.latency().bits(flash_latency) });
-    // }
-    // rcc.cfgr.modify(|_, w| w.
-    //     ppre1().div4().
-    //     ppre2().div2()
-    // );
+    // Clock initialization
+    let rcc = p.RCC.constrain();
+    let clocks = rcc.cfgr.sysclk(216.mhz()).freeze();
 
     // SysTick initialization
     let mut systick = cp.SYST;
     systick.set_clock_source(syst::SystClkSource::Core);
-    systick.set_reload(16_000 - 1);
+    systick.set_reload(clocks.hclk().0 / 1000 - 1);
     systick.clear_current();
     systick.enable_counter();
     systick.enable_interrupt();
@@ -114,7 +64,7 @@ fn main() -> ! {
     let mut led1 = gpiob.pb0.into_push_pull_output();
     let mut led2 = gpiob.pb7.into_push_pull_output();
     let mut led3 = gpiob.pb14.into_push_pull_output();
-    let mut button = gpioc.pc13.into_floating_input();
+    let button = gpioc.pc13.into_floating_input();
 
     led2.set_high().unwrap();
 
@@ -147,17 +97,6 @@ fn main() -> ! {
             } else {
                 led2.set_high().unwrap();
             }
-
-        //     match gpiob.odr.read().odr0().bit() {
-        //         false => gpiob.bsrr.write(|w| w.bs0().set_bit()),
-        //         true => gpiob.bsrr.write(|w| w.br0().set_bit())
-        //     }
-
-        //     if gpiob.odr.read().odr7().bit_is_set() {
-        //         gpiob.bsrr.write(|w| w.br7().set_bit());
-        //     } else {
-        //         gpiob.bsrr.write(|w| w.bs7().set_bit());
-        //     }
         }
 
         // while !systick.has_wrapped() {};
