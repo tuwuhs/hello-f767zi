@@ -17,16 +17,30 @@ use cortex_m_rt::exception;
 use stm32f7::stm32f7x7;
 
 use core::num::Wrapping;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 fn yeah() {
     asm::nop();
 }
 
+static MILLIS: AtomicUsize = AtomicUsize::new(0);
+
 #[exception]
 fn SysTick() {
-    static mut MILLIS: Wrapping<usize> = Wrapping(0);
+    MILLIS.fetch_add(1, Ordering::Relaxed);
+}
 
-    *MILLIS += Wrapping(1);
+fn get_millis() -> usize {
+    MILLIS.load(Ordering::Relaxed)
+}
+
+fn has_elapsed(start: usize, timeout_msec: usize) -> bool {
+    Wrapping(get_millis()) - Wrapping(start) >= Wrapping(timeout_msec)
+}
+
+fn delay_ms(msec: usize) {
+    let start = get_millis();
+    while !has_elapsed(start, msec) {};
 }
 
 #[entry]
@@ -89,7 +103,7 @@ fn main() -> ! {
     // SysTick initialization
     let mut systick = cp.SYST;
     systick.set_clock_source(syst::SystClkSource::Core);
-    systick.set_reload(8_000_000 - 1);
+    systick.set_reload(216_000 - 1);
     systick.clear_current();
     systick.enable_counter();
     systick.enable_interrupt();
@@ -123,13 +137,17 @@ fn main() -> ! {
     
     gpiob.bsrr.write(|w| w.bs7().set_bit());
 
+    let mut heartbeat_timer = get_millis();
+
     loop {
         match gpioc.idr.read().idr13().bit() {
             false => gpiob.bsrr.write(|w| w.br14().set_bit()),
             true => gpiob.bsrr.write(|w| w.bs14().set_bit())
         }
 
-        if systick.has_wrapped() {
+        if has_elapsed(heartbeat_timer, 500) {
+            heartbeat_timer = get_millis();
+
             match gpiob.odr.read().odr0().bit() {
                 false => gpiob.bsrr.write(|w| w.bs0().set_bit()),
                 true => gpiob.bsrr.write(|w| w.br0().set_bit())
@@ -142,11 +160,13 @@ fn main() -> ! {
             }
         }
 
-        // // while !systick.has_wrapped() {};
+        // while !systick.has_wrapped() {};
         // cortex_m::asm::delay(24_000_000);
+        // delay_ms(1000);
         // gpiob.bsrr.write(|w| w.bs0().set_bit());
-        // // while !systick.has_wrapped() {};
+        // while !systick.has_wrapped() {};
         // cortex_m::asm::delay(24_000_000);
+        // delay_ms(1000);
         // gpiob.bsrr.write(|w| w.br0().set_bit());        
     }
 }
