@@ -10,18 +10,13 @@ use panic_halt as _; // you can put a breakpoint on `rust_begin_unwind` to catch
 use cortex_m::asm;
 use cortex_m_rt::entry;
 
-use panic_halt as _;
-
 use cortex_m::peripheral::syst;
 use cortex_m_rt::exception;
-use stm32f7::stm32f7x7;
+
+use stm32f7xx_hal::{device, prelude::*};
 
 use core::num::Wrapping;
 use core::sync::atomic::{AtomicUsize, Ordering};
-
-fn yeah() {
-    asm::nop();
-}
 
 static MILLIS: AtomicUsize = AtomicUsize::new(0);
 
@@ -46,117 +41,61 @@ fn delay_ms(msec: usize) {
 #[entry]
 fn main() -> ! {
     asm::nop(); // To not have main optimize to abort in release mode, remove when you add code
-
+    
+    let p = device::Peripherals::take().unwrap();
     let cp = cortex_m::Peripherals::take().unwrap();
-    let p = stm32f7x7::Peripherals::take().unwrap();
     
-    let rcc = p.RCC;
-    let pwr = p.PWR;
-    
-    // Enable PWR, set voltage scale
-    rcc.apb1enr.modify(|_, w| w.pwren().set_bit());
-    pwr.cr1.modify(|_, w| w.vos().scale1());
-
-    // Enable HSE
-    rcc.cr.modify(|_, w| w.hsebyp().set_bit().hseon().set_bit());
-    while rcc.cr.read().hserdy().is_not_ready() {};
-
-    // Configure PLL
-    rcc.cr.modify(|_, w| w.pllon().clear_bit());
-    rcc.pllcfgr.write(|w| unsafe {
-        w.pllsrc().hse().
-        pllm().bits(4).
-        plln().bits(216).
-        pllp().div2().
-        pllq().bits(9)
-    });
-    rcc.cr.modify(|_, w| w.pllon().set_bit());
-    while rcc.cr.read().pllrdy().is_not_ready() {};
-
-    // Enable overdrive
-    pwr.cr1.modify(|_, w| w.oden().set_bit());
-    while pwr.csr1.read().odrdy().bit_is_clear() {};
-    pwr.cr1.modify(|_, w| w.odswen().set_bit());
-    while pwr.csr1.read().odswrdy().bit_is_clear() {};
-
-    // Configure clock and flash latency
-    let flash = p.FLASH;
-    let flash_latency: u8 = 7;
-    if flash_latency > flash.acr.read().latency().bits() {
-        flash.acr.modify(|_, w| { w.latency().bits(flash_latency) });
-    }
-    rcc.cfgr.modify(|_, w| w.
-        ppre1().div16().
-        ppre2().div16().
-        hpre().div1().
-        sw().pll()
-    );
-    while !rcc.cfgr.read().sw().is_pll() {};
-    if flash_latency < flash.acr.read().latency().bits() {
-        flash.acr.modify(|_, w| { w.latency().bits(flash_latency) });
-    }
-    rcc.cfgr.modify(|_, w| w.
-        ppre1().div4().
-        ppre2().div2()
-    );
+    // Clock initialization
+    let rcc = p.RCC.constrain();
+    let clocks = rcc.cfgr.sysclk(216.mhz()).freeze();
 
     // SysTick initialization
     let mut systick = cp.SYST;
     systick.set_clock_source(syst::SystClkSource::Core);
-    systick.set_reload(216_000 - 1);
+    systick.set_reload(clocks.hclk().0 / 1000 - 1);
     systick.clear_current();
     systick.enable_counter();
     systick.enable_interrupt();
 
     // GPIO initialization
-    rcc.ahb1enr.modify(|_, w| w.gpioben().set_bit().gpiocen().set_bit());
-
-    let gpiob = p.GPIOB;
-    gpiob.ospeedr.modify(|_, w| w.
-        ospeedr0().low_speed().
-        ospeedr7().low_speed().
-        ospeedr14().low_speed());
-    gpiob.pupdr.modify(|_, w| w.
-        pupdr0().floating().
-        pupdr7().floating().
-        pupdr14().floating());
-    gpiob.moder.modify(|_, w| w.
-        moder0().output().
-        moder7().output().
-        moder14().output());
-
-    let gpioc = p.GPIOC;
-    gpioc.pupdr.modify(|_, w| w.pupdr13().floating());
-    gpioc.moder.modify(|_, w| w.moder13().input());
-
-    yeah();
-
-    while !systick.has_wrapped() {
-
-    }
+    let gpiob = p.GPIOB.split();
+    let gpioc = p.GPIOC.split();
     
-    gpiob.bsrr.write(|w| w.bs7().set_bit());
+    let mut led1 = gpiob.pb0.into_push_pull_output();
+    let mut led2 = gpiob.pb7.into_push_pull_output();
+    let mut led3 = gpiob.pb14.into_push_pull_output();
+    let button = gpioc.pc13.into_floating_input();
+
+    led2.set_high().unwrap();
 
     let mut heartbeat_timer = get_millis();
 
     loop {
-        match gpioc.idr.read().idr13().bit() {
-            false => gpiob.bsrr.write(|w| w.br14().set_bit()),
-            true => gpiob.bsrr.write(|w| w.bs14().set_bit())
+        // if button.is_high().unwrap() {
+        //     led3.set_high().unwrap();
+        // } else {
+        //     led3.set_low().unwrap();
+        // }
+
+        match button.is_high() {
+            Ok(false) => led3.set_low().unwrap(),
+            Ok(true) => led3.set_high().unwrap(),
+            _ => ()
         }
 
         if has_elapsed(heartbeat_timer, 500) {
             heartbeat_timer = get_millis();
 
-            match gpiob.odr.read().odr0().bit() {
-                false => gpiob.bsrr.write(|w| w.bs0().set_bit()),
-                true => gpiob.bsrr.write(|w| w.br0().set_bit())
+            match led1.is_high() {
+                Ok(false) => led1.set_high().unwrap(),
+                Ok(true) => led1.set_low().unwrap(),
+                _ => ()
             }
 
-            if gpiob.odr.read().odr7().bit_is_set() {
-                gpiob.bsrr.write(|w| w.br7().set_bit());
+            if led2.is_high().unwrap() {
+                led2.set_low().unwrap();
             } else {
-                gpiob.bsrr.write(|w| w.bs7().set_bit());
+                led2.set_high().unwrap();
             }
         }
 
