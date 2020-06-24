@@ -13,10 +13,20 @@ use cortex_m_rt::entry;
 use panic_halt as _;
 
 use cortex_m::peripheral::syst;
+use cortex_m_rt::exception;
 use stm32f7::stm32f7x7;
+
+use core::num::Wrapping;
 
 fn yeah() {
     asm::nop();
+}
+
+#[exception]
+fn SysTick() {
+    static mut MILLIS: Wrapping<usize> = Wrapping(0);
+
+    *MILLIS += Wrapping(1);
 }
 
 #[entry]
@@ -57,7 +67,7 @@ fn main() -> ! {
 
     // Configure clock and flash latency
     let flash = p.FLASH;
-    let flash_latency : u8 = 7;
+    let flash_latency: u8 = 7;
     if flash_latency > flash.acr.read().latency().bits() {
         flash.acr.modify(|_, w| { w.latency().bits(flash_latency) });
     }
@@ -82,6 +92,7 @@ fn main() -> ! {
     systick.set_reload(8_000_000 - 1);
     systick.clear_current();
     systick.enable_counter();
+    systick.enable_interrupt();
 
     // GPIO initialization
     rcc.ahb1enr.modify(|_, w| w.gpioben().set_bit().gpiocen().set_bit());
